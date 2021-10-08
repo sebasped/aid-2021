@@ -1,0 +1,1010 @@
+---
+title: "TP AID"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=TRUE}
+# cat("\014")
+rm(list = ls())
+library(ca)
+library(FactoMineR)
+library(factoextra)
+library(Hotelling)
+library(GGally)
+library(ggbiplot) #install_github("vqv/ggbiplot")
+library(corrplot)
+library(Rtsne)
+library(ggplot2)
+library(nortest)
+library(mvnormtest)
+library(biotools)
+library(pROC)
+library(caret)
+library(MASS)
+library(pracma)
+library(cluster)
+library(proxy)
+library(klaR)
+library(e1071)
+library(fclust)
+
+```
+
+# Datos crudos
+```{r echo=TRUE}
+nombre_cols = c('Id','Age','Gender','Education','Country','Ethnicity','Nscore','Escore','Oscore','Ascore','Cscore','Impulsive','SS','Alcohol','Amphet','Amyl','Benzos','Caff','Cannabis','Choc','Coke','Crack','Ecstasy','Heroin','Ketamine','Legalh','LSD','Meth','Mushrooms','Nicotine','Semer','VSA')
+datos_crudos = read.csv('./drug_consumption.data', header = FALSE, col.names = nombre_cols)
+```
+
+
+# Exploratorio inicial
+```{r echo=TRUE}
+cant_obs = dim(datos_crudos)[1]
+hist(datos_crudos$Age)
+hist(datos_crudos$Gender)
+hist(datos_crudos$Education)
+hist(datos_crudos$Country)
+round(100*table(datos_crudos$Country)/cant_obs,1)
+hist(datos_crudos$Ethnicity)
+round(100*table(datos_crudos$Ethnicity)/cant_obs,1)
+```
+
+
+# Recorto variables
+```{r echo=TRUE}
+#Saco country y ethnicity: de los histogramas se ve que están muy concentrados en muy pocas categorías.
+cols = c('Id','Age','Gender','Education','Nscore','Escore','Oscore','Ascore','Cscore','Impulsive','SS','Alcohol','Amphet','Amyl','Benzos','Caff','Cannabis','Choc','Coke','Crack','Ecstasy','Heroin','Ketamine','Legalh','LSD','Meth','Mushrooms','Nicotine','Semer','VSA')
+datos_recortados = data.frame(datos_crudos[cols])
+datos_recortados_orig = datos_recortados
+```
+
+
+
+
+# Hist. drogas; Análisis Correspondencia drogas vs. consumo
+```{r echo=TRUE}
+#Con Semer
+cols_drogas_orig = c('Alcohol','Amphet','Amyl','Benzos','Caff','Cannabis','Choc','Coke','Crack','Ecstasy','Heroin','Ketamine','Legalh','LSD','Meth','Mushrooms','Nicotine','Semer','VSA')
+
+#Sin Semer
+# cols_drogas_orig = c('Alcohol','Amphet','Amyl','Benzos','Caff','Cannabis','Choc','Coke','Crack','Ecstasy','Heroin','Ketamine','Legalh','LSD','Meth','Mushrooms','Nicotine','VSA')
+
+
+for (i in 1:length(cols_drogas_orig)) {
+  plot(as.factor(datos_recortados_orig[,c(cols_drogas_orig[i])]), main=c(cols_drogas_orig[i]))
+}
+
+
+# CL0 es nunca usó
+# CL1 es usó hace más de una década
+# CL2 es usó en la última década
+# CL3 es usó en el último año
+# CL4 es usó en el último mes
+# CL5 es usó en la última semana
+# CL6 es usó en el último día
+
+#Consume si consumió en el último año
+cols_NOconsume = c("CL0","CL1","CL2")
+cols_SIconsume = c("CL3","CL4","CL5","CL6")
+
+#Consume si consumió en el último mes
+# cols_NOconsume = c("CL0","CL1","CL2","CL3")
+# cols_SIconsume = c("CL4","CL5","CL6")
+
+
+for (i in 1:length(cols_drogas_orig)) {
+  datos_recortados_orig[,c(cols_drogas_orig[i])][datos_recortados_orig[,c(cols_drogas_orig[i])] %in% cols_NOconsume] = 0
+  datos_recortados_orig[,c(cols_drogas_orig[i])][datos_recortados_orig[,c(cols_drogas_orig[i])] %in% cols_SIconsume] = 1
+}
+
+for (i in 1:length(cols_drogas_orig)) {
+  datos_recortados_orig[,c(cols_drogas_orig[i])] = as.factor(datos_recortados_orig[,c(cols_drogas_orig[i])])
+}
+
+datos_para_acm = datos_recortados_orig[cols_drogas_orig]
+
+datos.acm = MCA(datos_para_acm, graph=F)
+
+fviz_mca_var(datos.acm, col.var="contrib", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), repel = F) + theme_gray()
+```
+
+
+
+
+
+```{r echo=TRUE}
+#saco los que dijeron que consumieron la droga ficticia. En el AC está sola.
+datos_recortados = datos_recortados[-which(!datos_recortados$Semer == "CL0"),]
+
+
+#Hago una nueva cat. eduación con menos categorías.
+# 0 es que dejó la secundaria antes de los 18 años (13.64%)
+# 1 es que terminó la secundario y tiene algo de terciario o universitario, pero sin ningún título (26.84%).
+# 2 es que es un profesional no universitario (14.32%).
+# 3 título universitario o más (45.19%).
+xs=c(-Inf,-1,-0.2,0,Inf)
+datos_recortados$Education_nueva <- cut(datos_recortados$Education , breaks=xs,
+                             labels=c(0,1,2,3),
+                             include.lowest = TRUE)
+datos_recortados$Education_nueva = factor(datos_recortados$Education_nueva, ordered = TRUE)
+
+
+#Hago una nueva cat. edad menos segmentada.
+# 0 es edad <= 24 (el 34.11%)
+# 1 es 25 <= edad <= 34 (el 25.52%)
+# 2 es 35 <= edad (el 40.37%) 
+xs=c(-Inf,-0.8,0.2,Inf)
+datos_recortados$Age_nueva <- cut(datos_recortados$Age , breaks=xs,
+                             labels=c(0,1,2),
+                             include.lowest = TRUE)
+
+
+#Categorizo variables
+datos_recortados$Gender = factor(datos_recortados$Gender, labels=c("M","F"))
+datos_recortados$Education = factor(datos_recortados$Education, ordered = TRUE)
+
+
+#Me quedo con las drogas que más contribuyen y representan a cada grupo visto en el AC. Observar que coinciden con las drogas más ilegales.
+cols = c('Id','Age_nueva','Gender','Education_nueva','Nscore','Escore','Oscore','Ascore','Cscore','Impulsive','SS','Coke','Crack','Ecstasy','Heroin','LSD','Meth')
+
+
+datos_recortados = data.frame(datos_recortados[cols])
+```
+
+
+
+
+
+
+
+
+
+
+```{r echo=TRUE}
+cols_drogas = tail(cols,6)
+
+
+for (i in 1:length(cols_drogas)) {
+  # print(i)
+  datos_recortados[,c(cols_drogas[i])][datos_recortados[,c(cols_drogas[i])] %in% cols_NOconsume] = FALSE
+  datos_recortados[,c(cols_drogas[i])][datos_recortados[,c(cols_drogas[i])] %in% cols_SIconsume] = TRUE
+  datos_recortados[,c(cols_drogas[i])] = as.logical(datos_recortados[,c(cols_drogas[i])])
+}
+
+datos_recortados = data.frame(datos_recortados)
+
+#Digo que es consumidor si consume alguna droga
+datos_recortados$Consume = apply(datos_recortados[cols_drogas],1,any)
+datos_recortados$Consume = factor(datos_recortados$Consume)
+
+cols_finales = c('Age_nueva','Gender','Education_nueva','Nscore','Escore','Oscore','Ascore','Cscore','Impulsive','SS','Consume')
+datos_finales = data.frame(datos_recortados[cols_finales])
+
+#Me fijo cómo quedó balanceado para clasificar
+table(datos_finales$Consume)
+table(datos_finales$Consume)[2]/sum(table(datos_finales$Consume))
+```
+
+
+
+
+
+
+
+
+# Explotario previo
+
+```{r echo=TRUE}
+ggpairs(datos_finales, aes(color = Consume,alpha = 0.5),
+        upper = list(continuous = wrap("cor", size = 2.5),
+        lower = list(combo = "box")))
+
+```
+
+
+# Medias distintas
+```{r echo=TRUE}
+
+media_SIconsume = colMeans(datos_finales[datos_finales$Consume==TRUE,-c(1,2,3,11)])
+media_NOconsume = colMeans(datos_finales[datos_finales$Consume==FALSE,-c(1,2,3,11)])
+media_SIconsume
+media_NOconsume
+
+hot_th = hotelling.test(.~ Consume, data = datos_finales[,-c(1,2,3)])
+hot_th
+
+
+
+library(rrcov)
+estim.mve_SIconsume = CovMve(datos_finales[datos_finales$Consume==TRUE,-c(1,2,3,11)], alpha = 0.75)
+estim.mve_NOconsume = CovMve(datos_finales[datos_finales$Consume==FALSE,-c(1,2,3,11)], alpha = 0.75)
+
+estim.mve_SIconsume$center
+estim.mve_NOconsume$center
+```
+
+# Perfiles medios
+```{r echo=TRUE}
+cols_perfiles = colnames(datos_finales)[-c(1,2,3,11)]
+
+plot(x=1:7, y=media_NOconsume, type="l", lty=1, ylim=c(-1,1),
+     axes=F, bty="n", xaxs="i", yaxs="i",
+     xlab="Variables", ylab="Medias")
+
+# plot dashed line
+lines(x=1:7, y=media_SIconsume, lty=2)
+
+# add axes
+axis(side=1, labels=cols_perfiles, at=1:7)
+axis(side=2, at=seq(-1,1,.2))#, las=1)
+
+# add legend
+par(xpd=TRUE)
+legend(x=1.5, y=.8, legend=c("NO consume", "SÍ consume"), lty=1:2, box.lty=0, ncol=2)
+
+
+
+plot(x=1:7, y=estim.mve_NOconsume$center, type="l", lty=1, ylim=c(-1,1),  main="Robusta",
+     axes=F, bty="n", xaxs="i", yaxs="i",
+     xlab="Variables", ylab="Medias")
+
+# plot dashed line
+lines(x=1:7, y=estim.mve_SIconsume$center, lty=2)
+
+# add axes
+axis(side=1, labels=cols_perfiles, at=1:7)
+axis(side=2, at=seq(-1,1,.2))#, las=1)
+
+# add legend
+par(xpd=TRUE)
+legend(x=1.5, y=.8, legend=c("NO consume", "SÍ consume"), lty=1:2, box.lty=0, ncol=2)
+
+```
+
+
+
+
+
+```{r echo=TRUE}
+
+datos_pca = datos_finales[,-c(1,2,3,11)]
+
+mat_corr = cor(datos_pca)
+corrplot.mixed(mat_corr, upper = 'ellipse', lower = 'number')
+
+datos.pc = prcomp(datos_pca,scale = TRUE)
+
+datos.pc$rotation
+summary(datos.pc)
+
+ggbiplot(datos.pc, scale=0, alpha=0)
+ggbiplot(datos.pc, scale=0 ,alpha=0.1, groups=factor(datos_finales$Consume)) +
+  scale_color_manual(name="Consume", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+# ggbiplot(datos.pc, scale=1 ,alpha=0.2, groups=factor(datos_finales$Gender)) +
+  # scale_color_manual(name="Sexo", values=c("red","green"),labels=c("Masc","Fem")) +  
+# theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0 ,alpha=0.2, groups=factor(datos_finales$Age_nueva)) +
+  scale_color_manual(name="Edad", values=c("red","green","blue"),labels=c("18-24","25-34","35+")) +
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0, alpha=0.2,groups = as.factor(datos_finales$Education_nueva) )+
+  scale_color_manual(name="Nivel educación", values=c("red","green","blue","yellow"),
+                     labels=0:3) +
+theme(legend.direction ="horizontal", legend.position = "top")
+```
+
+
+
+
+# t-SNE
+```{r echo=TRUE}
+
+datos_tsne = datos_finales[,-c(1,2,3,11)]
+
+set.seed(9)
+tsne_model = Rtsne(as.matrix(datos_tsne), check_duplicates=FALSE, pca=TRUE, pca_scale=TRUE, perplexity=300, theta=0, dims=2, eta=150, max_iter = 2000)
+
+colnames(tsne_model$Y) = c("x","y")
+ggplot(data.frame(tsne_model$Y), aes(x = x, y = y, colour = datos_finales$Consume)) + geom_point()
+
+
+```
+
+
+
+
+# Exploratorio
+```{r echo=TRUE}
+#analsis exploratorio
+par(mfcol = c(1,7))
+    for (k in 4:10){
+      boxplot(datos_finales[k],main = names(datos_finales[k]))
+      grid()
+    }
+```
+
+```{r echo=TRUE}
+#analsis exploratorio
+par(mfcol = c(1,7))
+    for (k in 4:10){
+      hist(datos_finales[,k],proba = T,main = names(datos_finales[k]),10)
+      x0 <- seq(min(datos_finales[, k]), max(datos_finales[, k]), le = 50) 
+      lines(x0, dnorm(x0, mean(datos_finales[,k]), sd(datos_finales[,k])), col = "red", lwd = 2) 
+      grid()
+    }
+```
+
+```{r echo=TRUE}
+#analsis exploratorio
+
+pval = list() 
+par(mfcol = c(1,7))
+    for (k in 4:10){
+      qqnorm(datos_finales[,k],main = names(datos_finales[k]))
+      qqline(datos_finales[,k],col="red") 
+      pval[k] = ad.test(datos_finales[,k])$p.value
+      grid()
+    }
+
+pval
+```
+
+
+# Normalidad, homocedasticidad
+```{r echo=TRUE}
+
+# Traspongo porque el test necesita variables en filas y observaciones en columnas
+mshapiro.test(t(datos_finales[,-c(1,2,3,11)]))
+mshapiro.test(t(datos_finales[datos_finales$Consume==TRUE,-c(1,2,3,11)]))
+mshapiro.test(t(datos_finales[datos_finales$Consume==FALSE,-c(1,2,3,11)]))
+
+boxM(data = datos_finales[,-c(1,2,3,11)], grouping = datos_finales[,11])
+
+# library(car)
+# leveneTest(datos_finales[,-c(1,2,3,11)], factor(datos_finales[,11]))
+
+# library(heplots)
+# leveneTests(datos_finales[,-c(1,2,3,11)], factor(datos_finales[,11]))
+
+```
+
+
+
+
+
+
+# Escalo datos y separo train/test
+```{r echo=TRUE}
+modelo=NULL
+pred_train=NULL
+pred_test=NULL
+
+# Semilla para que en todas las corridas de igual
+set.seed(1)
+
+#separo en training y test
+dt = sort(sample(nrow(datos_finales), nrow(datos_finales)*.7))
+datos_train_orig <- datos_finales[dt,]
+datos_test_orig <- datos_finales[-dt,]
+
+#Escalo train, y uso ese escalado para el test.
+datos_train = scale(datos_train_orig[,-c(1,2,3,11)])
+datos_test = as.data.frame(scale(datos_test_orig[,-c(1,2,3,11)], center=attr(datos_train, 'scaled:center'), scale = attr(datos_train, 'scaled:scale')))
+
+datos_train = as.data.frame(datos_train)
+datos_train_orig = as.data.frame(datos_train_orig)
+datos_train$Gender = datos_train_orig$Gender
+datos_train$Age_nueva = datos_train_orig$Age_nueva
+datos_train$Education_nueva = datos_train_orig$Education_nueva
+datos_train$Consume = datos_train_orig$Consume
+
+datos_test = as.data.frame(datos_test)
+datos_test_orig = as.data.frame(datos_test_orig)
+datos_test$Gender = datos_test_orig$Gender
+datos_test$Age_nueva = datos_test_orig$Age_nueva
+datos_test$Education_nueva = datos_test_orig$Education_nueva
+datos_test$Consume = datos_test_orig$Consume
+
+
+```
+
+
+
+
+
+# Función para evaluar modelos
+```{r echo=TRUE}
+
+model_eval = function(clase_real, predictor) {
+  
+  salida = NULL
+  accuracy = NULL
+  umbral = seq(0.1,0.9,0.01)
+  
+  for (i in 1:(length(umbral))) {
+    umb=umbral[i]
+    clase2 = ifelse(predictor>umb,TRUE,FALSE)
+    confusion= confusionMatrix(factor(clase_real), factor(clase2))
+    accuracy[i] = confusion$overall['Accuracy']
+  }
+  
+  plot(umbral,accuracy)
+  grid()
+  
+  mejor_umbral = umbral[which(accuracy==max(accuracy))]
+  salida$mejor_umbral = mejor_umbral
+  clase2 = ifelse(predictor>mejor_umbral,TRUE,FALSE)  
+  
+  confusion = confusionMatrix(factor(clase_real), factor(clase2))
+  salida$matrizConfusion = confusion$table
+  salida$metricas = confusion$byClass
+  salida$accuracy = confusion$overall['Accuracy']
+  
+  
+  roc <- roc(clase_real, predictor, plot=TRUE, quiet=TRUE)
+  salida$auc = roc$auc
+  
+  salida
+}
+
+```
+
+
+
+
+
+# LDA
+```{r echo=TRUE}
+
+## distintas formulas regresoras
+formula_regresoras = formula(Consume ~ Nscore + Escore + Oscore + Ascore + Cscore + Impulsive + SS)
+# formula_regresoras = formula(Consume ~ Age_nueva + Nscore + Escore + Oscore + Ascore + Cscore + Impulsive + SS)
+# formula_regresoras = formula(Consume ~ Education_nueva + Nscore + Escore + Oscore + Ascore + Cscore + Impulsive + SS)
+# formula_regresoras = formula(Consume ~ Age_nueva + Education_nueva + Nscore + Escore + Oscore + Ascore + Cscore + Impulsive + SS)
+# formula_regresoras = formula(Consume ~ Age + Education + Nscore + Escore + Oscore + Ascore + Cscore + Impulsive + SS)
+# formula_regresoras = formula(Consume ~ Age_nueva + Gender + Education_nueva + Nscore + Escore + Oscore + Ascore + Cscore + Impulsive + SS)
+
+#Sin Escore: de los perfiles medios parecen no influir.
+# formula_regresoras = formula(Consume ~ Oscore + Ascore + Cscore + Impulsive + SS)
+#Sin Escore: de los perfiles medios parecen no influir.
+# formula_regresoras = formula(Consume ~ Nscore + Oscore + Ascore + Cscore + Impulsive + SS)
+#Sin Nscore: de los perfiles medios parecen no influir.
+# formula_regresoras = formula(Consume ~ Escore + Oscore + Ascore + Cscore + Impulsive + SS)
+
+
+modelo$lda <- lda(formula_regresoras,datos_train)
+
+pred_train$lda <- predict(modelo$lda,datos_train)
+pred_test$lda <- predict(modelo$lda,datos_test)
+
+modelo$lda$scaling
+salida_lda = model_eval(datos_test$Consume, pred_test$lda$posterior[,2])
+salida_lda
+```
+
+
+
+
+
+
+
+# QDA
+```{r echo=TRUE}
+modelo$qda <- qda(formula_regresoras,datos_train)
+
+pred_train$qda <- predict(modelo$qda,datos_train)
+pred_test$qda <- predict(modelo$qda,datos_test)
+
+# modelo$qda$scaling
+salida_qda = model_eval(datos_test$Consume, pred_test$qda$posterior[,2])
+salida_qda
+```
+
+
+
+
+# RDA
+```{r echo=TRUE}
+modelo$rda <- rda(formula_regresoras,datos_train)
+                  #gamma=0,lambda=1)
+#gamma 0 y lambda 0 -->qda
+#gamma 0 y lambda 1 -->lda
+#si se omiten --> los optimiza
+round(modelo$rda$regularization,2)
+
+pred_train$rda <- predict(modelo$rda,datos_train)
+pred_test$rda <- predict(modelo$rda,datos_test)
+
+salida_rda = model_eval(datos_test$Consume, pred_test$rda$posterior[,2])
+salida_rda
+```
+
+
+
+
+
+# SVM
+```{r echo=TRUE}
+
+# modelo$svm = svm(formula_regresoras, data=datos_train, kernel="linear")
+modelo$svm = svm(formula_regresoras, data=datos_train, kernel="polynomial", degree=1)
+# modelo$svm = svm(formula_regresoras, data=datos_train, kernel="polynomial", degree=2)
+# modelo$svm = svm(formula_regresoras, data=datos_train, kernel="polynomial", degree=3)
+# modelo$svm = svm(formula_regresoras, data=datos_train, kernel="polynomial", degree=4)
+# modelo$svm = svm(formula_regresoras, data=datos_train, kernel="polynomial", degree=5)
+# modelo$svm = svm(formula_regresoras, data=datos_train, kernel="radial")
+# modelo$svm = svm(formula_regresoras, data=datos_train, kernel="sigmoid")
+                 
+pred_train$svm=predict(modelo$svm, datos_train)
+pred_test$svm=predict(modelo$svm, datos_test)
+
+confusion_svm = confusionMatrix(datos_test$Consume, pred_test$svm)
+confusion_svm$table
+confusion_svm$byClass
+confusion_svm$overall['Accuracy']
+
+# modelo$svm
+
+```
+
+
+
+
+
+
+
+# Regresión Logística
+```{r echo=TRUE}
+modelo$lg <- glm(formula_regresoras, datos_train, family=binomial(link = "logit"))
+# modelo$lg <- glm(formula_regresoras, datos_train, family=quasibinomial(link = "logit"))
+
+pred_train$lg=predict(modelo$lg, datos_train, type = "response")
+pred_test$lg=predict(modelo$lg, datos_test, type = "response")
+
+
+modelo$lg$coefficients
+salida_lg = model_eval(datos_test$Consume, pred_test$lg)
+salida_lg
+
+```
+
+
+
+
+
+
+# Predicciones LDA, QDA, RDA, SVM, LogitReg en el biplot de PCA
+```{r echo=TRUE}
+#miramos los resultados de cada clasificación en el biplot
+datos_train = scale(datos_train_orig[,-c(1,2,3,11)])
+
+datos_escalados = as.data.frame(scale(datos_finales[,-c(1,2,3,11)]), center=attr(datos_train, 'scaled:center'), scale = attr(datos_train, 'scaled:scale'))
+
+datos_escalados$Gender   = datos_finales$Gender
+datos_escalados$Age_nueva   = datos_finales$Age_nueva
+datos_escalados$Education_nueva   = datos_finales$Education_nueva
+# datos_escalados$Age   = datos_finales$Age
+# datos_escalados$Education   = datos_finales$Education
+datos_escalados$Consume   = datos_finales$Consume
+
+
+pred_todos=NULL
+pred_todos$lda <- predict(modelo$lda,datos_escalados)
+pred_todos$qda <- predict(modelo$qda,datos_escalados)
+pred_todos$rda <- predict(modelo$rda,datos_escalados)
+pred_todos$svm <- predict(modelo$svm,datos_escalados)
+pred_todos$lg <- predict(modelo$lg, datos_escalados, type = "response")
+
+clase2lda_todos = ifelse(pred_todos$lda$posterior[,2]>salida_lda$mejor_umbral,TRUE,FALSE) #  
+clase2qda_todos = ifelse(pred_todos$qda$posterior[,2]>salida_qda$mejor_umbral,TRUE,FALSE) #  
+clase2rda_todos = ifelse(pred_todos$rda$posterior[,2]>salida_rda$mejor_umbral,TRUE,FALSE) #  
+clase2lg_todos = ifelse(pred_todos$lg>salida_lg$mejor_umbral,TRUE,FALSE) #  
+
+
+ggbiplot(datos.pc, scale=0, alpha=0.1, groups=factor(clase2lda_todos)) +
+  scale_color_manual(name="Consume lda", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0, alpha=0.1, groups=factor(clase2qda_todos)) +
+  scale_color_manual(name="Consume qda", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0, alpha=0.1,groups=factor(clase2rda_todos)) +
+  scale_color_manual(name="Consume rda", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0, alpha=0.1,groups=factor(pred_todos$svm)) +
+  scale_color_manual(name="Consume SVM", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0, alpha=0.1,groups=factor(clase2lg_todos)) +
+  scale_color_manual(name="Consume LogitReg", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0 ,alpha=0.1, groups=factor(datos_finales$Consume)) +
+  scale_color_manual(name="Consume real", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+
+```
+
+
+
+# Comparación de datos mal clasificados por SVM y por LogitReg
+```{r echo=TRUE}
+clasif_svm = as.factor(pred_todos$svm == factor(datos_finales$Consume))
+# mal_clasif_svm==FALSE
+clasif_lg = as.factor(clase2lg_todos == factor(datos_finales$Consume))
+
+ggbiplot(datos.pc, scale=0, alpha=0.1,groups=factor(clasif_svm)) +
+  scale_color_manual(name="Clasifica bien SVM", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0, alpha=0.1,groups=factor(clasif_lg)) +
+  scale_color_manual(name="Clasifica bien LogitReg", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0 ,alpha=0.1, groups=factor(datos_finales$Consume)) +
+  scale_color_manual(name="Consume real", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0, alpha=0.5,groups=factor(clasif_svm==FALSE & clasif_lg==TRUE)) +
+  scale_color_manual(name="Clasifica mal SVM y bien LogitReg", values=c("white","black"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0, alpha=0.5,groups=factor(clasif_svm==TRUE & clasif_lg==FALSE)) +
+  scale_color_manual(name="Clasifica bien SVM y mal LogitReg", values=c("white","black"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+#Medias clasificó bien mal SVM pero bien LogitReg
+length(which((clasif_svm==FALSE & clasif_lg==TRUE)==TRUE))
+colMeans(datos_finales[which((clasif_svm==FALSE & clasif_lg==TRUE)==TRUE),-c(1,2,3,11)])
+#Medias clasificó bien mal LogitReg pero bien SVM
+length(which((clasif_svm==TRUE & clasif_lg==FALSE)==TRUE))
+colMeans(datos_finales[which((clasif_svm==TRUE & clasif_lg==FALSE)==TRUE),-c(1,2,3,11)])
+
+```
+
+
+
+
+
+
+# k-means
+```{r echo=TRUE}
+
+datos_para_cluster =  as.data.frame(scale(datos_finales[,-c(1,2,3,11)])) #clusters de observaciones
+# datos_para_cluster =  as.data.frame(scale(t(datos_finales[,-c(1,2,3,11)]))) #clusters de variables
+
+
+cantidad_clusters=2
+modelo$kmeans  = kmeans(datos_para_cluster, cantidad_clusters, iter.max = 100, nstart = 50)
+
+
+
+ggbiplot(datos.pc, scale=0 ,alpha=0.1, groups=factor(modelo$kmeans$cluster)) +
+  scale_color_manual(name="Clusters k-means", values=c("red","green","cyan","blue","magenta","yellow","black"),labels=1:7) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0 ,alpha=0.1, groups=factor(datos_finales$Consume)) +
+  scale_color_manual(name="Consume real", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+
+
+
+grupos_kmeans = split(datos_para_cluster, modelo$kmeans$cluster)
+
+media_1 = colMeans(data.frame(grupos_kmeans[1]))
+media_2 = colMeans(data.frame(grupos_kmeans[2]))
+
+# Perfiles medios
+cols_perfiles = colnames(data.frame(datos_para_cluster))
+# plot solid line, set plot size, but omit axes
+plot(x=1:7, y=media_1, type="l", lty=1, ylim=c(-1,1), main="k-means",
+     axes=F, bty="n", xaxs="i", yaxs="i",
+     xlab="Variables", ylab="Medias")
+
+# plot dashed line
+lines(x=1:7, y=media_2, lty=2)
+
+# add axes
+axis(side=1, labels=cols_perfiles, at=1:7)
+axis(side=2, at=seq(-1,1,.2))#, las=1)
+
+# add legend
+par(xpd=TRUE)
+legend(x=1.5, y=.8, legend=c("Grupo 1", "Grupo 2"), lty=1:2, box.lty=0, ncol=2)
+
+```
+
+
+```{r echo=TRUE}
+clase_kmeans = as.factor(modelo$kmeans$cluster)
+# levels(clase_kmeans) = c(TRUE,FALSE)
+levels(clase_kmeans) = c(FALSE,TRUE)
+
+confusion_kmeans = confusionMatrix(factor(datos_finales$Consume), clase_kmeans)
+confusion_kmeans$byClass
+confusion_kmeans$overall['Accuracy']
+
+
+```
+
+
+
+
+#Análisis cantidad clusters para k-means
+```{r}
+#se define una funcion para calcular metricas que orientan sobre el numero de clusters a elegir para el problema.
+
+metrica = function(datA_esc,kmax,f) {
+  
+  sil = array()
+  sse = array()
+  
+  datA_dist= dist(datA_esc,method = "euclidean", diag = FALSE, upper = FALSE, p = 2)
+  for ( i in  2:kmax) {
+    if (strcmp(f,"kmeans")==TRUE) {   #centroide: tipico kmeans
+      CL  = kmeans(datA_esc,centers=i,nstart=50,iter.max = kmax)
+      sse[i]  = CL$tot.withinss 
+      CL_sil = silhouette(CL$cluster, datA_dist)
+      sil[i]  = summary(CL_sil)$avg.width
+        }
+    if (strcmp(f,"pam")==TRUE){       #medoide: ojo porque este metodo tarda muchisimo 
+      CL = pam(x=datA_esc, k=i, diss = F, metric = "euclidean")
+      sse[i]  = CL$objective[1] 
+      sil[i]  = CL$silinfo$avg.width
+      }
+  }
+  sse
+  sil
+  return(data.frame(sse,sil))
+}
+```
+
+```{r echo=TRUE}
+#en este bloque se estudia cuantos clusters convendría generar segun indicadores tipicos -> por ejemplo el "Silhouette"
+kmax = 15
+#2 opciones de escalamiento
+  m1   = metrica(datos_para_cluster,kmax,"kmeans")  #tipica con estimadores de la normal
+  
+  # se define funcion de escalamiento disferente de la tipica normal.
+  #esc01 <- function(x) { (x - min(x)) / (max(x) - min(x))} 
+  #m1   = metrica(apply(datos_para_cluster,2,esc01),kmax,"kmeans") #definida en la funcion esc01
+  
+```
+
+```{r echo=TRUE}
+#graficos de los indicadores de clustering
+par(mfrow=c(2,1))
+plot(2:kmax, m1$sil[2:kmax],col=1,type="b", pch = 19, frame = FALSE, 
+	 xlab="Number of clusters K",
+	 ylab="sil") 
+
+plot(2:kmax, m1$sse[2:kmax],type="b", pch = 19, frame = FALSE, 
+	 xlab="Number of clusters K",
+	 ylab="sse") 
+
+par(mfrow=c(1,1))
+grid()
+```
+
+
+
+
+
+# k-means por variables
+```{r echo=TRUE}
+# datos_para_cluster =  as.data.frame(scale(datos_finales[,-c(1,2,3,11)])) #clusters de observaciones
+datos_para_cluster =  as.data.frame(scale(t(datos_finales[,-c(1,2,3,11)]))) #clusters de variables
+
+
+cantidad_clusters=2
+modelo$kmeansVariables  = kmeans(datos_para_cluster, cantidad_clusters, iter.max = 100, nstart = 50)
+modelo$kmeansVariables$cluster
+
+cantidad_clusters=3
+modelo$kmeansVariables  = kmeans(datos_para_cluster, cantidad_clusters, iter.max = 100, nstart = 50)
+modelo$kmeansVariables$cluster
+```
+
+
+
+
+
+
+
+
+
+# Clusters fuzzy k-means: da muy parecido a k-means
+```{r echo=TRUE}
+
+modelo$fuzzykmeans = Fclust(datos_para_cluster, cantidad_clusters, type = "standard")
+
+
+ggbiplot(datos.pc, scale=0 ,alpha=0.1, groups=factor(modelo$fuzzykmeans$clus[,1])) +
+  scale_color_manual(name="Clusters fuzzy k-means", values=c("red","green","cyan","blue","magenta","yellow","black"),labels=1:7) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=0 ,alpha=0.1, groups=factor(datos_finales$Consume)) +
+  scale_color_manual(name="Consume real", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+
+
+clase_fuzzykmeans = as.factor(modelo$fuzzykmeans$clus[,1])
+# levels(clase_fuzzykmeans) = c(TRUE,FALSE)
+levels(clase_fuzzykmeans) = c(FALSE,TRUE)
+
+confusion_fuzzykmeans = confusionMatrix(factor(datos_finales$Consume), clase_fuzzykmeans)
+confusion_fuzzykmeans$byClass
+confusion_fuzzykmeans$overall['Accuracy']
+```
+
+
+
+
+
+
+# Clusters jerárquicos
+```{r echo=TRUE}
+#metodo de cluster jerárquico
+pr_DB$get_entry_names()
+
+datos_para_cluster =  as.data.frame(scale(datos_finales[,-c(1,2,3,11)])) #clusters de observaciones
+# datos_para_cluster =  as.data.frame(scale(t(datos_finales[,-c(1,2,3,11)]))) #clusters de variables
+cantidad_clusters=2
+
+# Matriz de distancias euclídeas
+mat_dist <- dist(x = datos_para_cluster, method = "Euclidean")
+# mat_dist <- dist(x = datos_para_cluster, method = "Mahalanobis")
+# mat_dist <- dist(x = datos_para_cluster, method = "Manhattan")
+# mat_dist <- dist(x = datos_para_cluster, method = "Canberra")
+# mat_dist <- dist(x = datos_para_cluster, method = "Minkowski")
+# mat_dist <- dist(x = datos_para_cluster, method = "Jaccard")
+
+
+# Dendrogramas (según el tipo de segmentación jerárquica aplicada)  
+hc_complete <- hclust(d = mat_dist, method = "complete") 
+hc_average  <- hclust(d = mat_dist, method = "average")
+hc_single   <- hclust(d = mat_dist, method = "single")
+hc_ward     <- hclust(d = mat_dist, method = "ward.D")
+hc_ward2     <- hclust(d = mat_dist, method = "ward.D2")
+hc_centroid     <- hclust(d = mat_dist, method = "centroid")
+hc_median     <- hclust(d = mat_dist, method = "median")
+
+#calculo del coeficiente de correlacion cofenetico
+cor(x = mat_dist, cophenetic(hc_complete))
+cor(x = mat_dist, cophenetic(hc_average))
+cor(x = mat_dist, cophenetic(hc_single))
+cor(x = mat_dist, cophenetic(hc_ward))
+cor(x = mat_dist, cophenetic(hc_ward2))
+cor(x = mat_dist, cophenetic(hc_centroid))
+cor(x = mat_dist, cophenetic(hc_median))
+
+
+```
+
+```{r echo=TRUE}
+# construccion de un dendograma usando los resultados de la técnica de Ward
+plot(hc_ward)#no se ve bien si hay muchos datos
+rect.hclust(hc_ward, k=cantidad_clusters, border="red") #
+
+jer_complete <- cutree(hc_complete, k=cantidad_clusters) 
+jer_average <- cutree(hc_average, k=cantidad_clusters) 
+jer_single <- cutree(hc_single, k=cantidad_clusters) 
+jer_ward <- cutree(hc_ward, k=cantidad_clusters) #
+jer_ward2 <- cutree(hc_ward2, k=cantidad_clusters)
+jer_centroid <- cutree(hc_centroid, k=cantidad_clusters)
+jer_median <- cutree(hc_median, k=cantidad_clusters)
+# datos$jer_average=jer_average
+
+```
+
+
+```{r echo=TRUE}
+#conviene en un biplot ya que tengo las flechas de las variables originales
+ggbiplot(datos.pc, obs.scale=1 ,var.scale=1, alpha=0.5,groups = as.factor(jer_complete) )+
+  scale_color_manual(name="Cluster Complete", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, obs.scale=1 ,var.scale=1, alpha=0.5,groups = as.factor(jer_average) )+
+  scale_color_manual(name="Cluster Average", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, obs.scale=1 ,var.scale=1, alpha=0.5,groups = as.factor(jer_single) )+
+  scale_color_manual(name="Cluster Single", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, obs.scale=1 ,var.scale=1, alpha=0.5,groups = as.factor(jer_ward) )+
+  scale_color_manual(name="Cluster Ward", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, obs.scale=1 ,var.scale=1, alpha=0.5,groups = as.factor(jer_ward2) )+
+  scale_color_manual(name="Cluster Ward2", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, obs.scale=1 ,var.scale=1, alpha=0.5,groups = as.factor(jer_centroid) )+
+  scale_color_manual(name="Cluster Centroid", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, obs.scale=1, var.scale=1, alpha=0.5,groups = as.factor(jer_median) )+
+  scale_color_manual(name="Cluster Median", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+ggbiplot(datos.pc, scale=1 ,alpha=0.2, groups=factor(datos_finales$Consume)) +
+  scale_color_manual(name="Consume real", values=c("red","green"),labels=c("No","Sí")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+```
+
+
+```{r echo=TRUE}
+
+metricas = function(clase_real, clase_predicha) {
+  confusion = confusionMatrix(clase_real, clase_predicha)
+  print(confusion$byClass)
+  confusion$overall['Accuracy']
+}
+
+clase_comp = as.factor(jer_complete)
+levels(clase_comp) = c(FALSE,TRUE)
+
+clase_avg = as.factor(jer_average)
+levels(clase_avg) = c(FALSE,TRUE)
+
+clase_sing = as.factor(jer_single)
+levels(clase_sing) = c(FALSE,TRUE)
+
+clase_ward = as.factor(jer_ward)
+levels(clase_ward) = c(FALSE,TRUE)
+
+clase_ward2 = as.factor(jer_ward2)
+levels(clase_ward2) = c(FALSE,TRUE)
+
+clase_centroid = as.factor(jer_centroid)
+levels(clase_centroid) = c(FALSE,TRUE)
+
+clase_median = as.factor(jer_median)
+# levels(clase_median) = c(FALSE,TRUE)
+levels(clase_median) = c(TRUE,FALSE)
+
+
+clase_real = factor(datos_finales$Consume)
+metricas(clase_real, clase_comp)
+# metricas(clase_real, clase_avg)
+# metricas(clase_real, clase_sing)
+metricas(clase_real, clase_ward)
+metricas(clase_real, clase_ward2)
+# metricas(clase_real, clase_centroid)
+# metricas(clase_real, clase_median)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
